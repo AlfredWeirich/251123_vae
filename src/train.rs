@@ -50,7 +50,7 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
     #[cfg(feature = "dense")]
     let config = DenseVaeConfig::new().with_latent_dim(LATENT_DIM);
     #[cfg(feature = "conv")]
-    let mut config = ConvVaeConfig::new().with_latent_dim(LATENT_DIM);
+    let config = ConvVaeConfig::new().with_latent_dim(LATENT_DIM);
 
     // Override default latent dimension with global constant
     // config.latent_dim = LATENT_DIM;
@@ -223,11 +223,11 @@ pub fn validate<B: Backend>(
 }
 
 fn main() {
-    // 1. Change Backend to Wgpu (Metal on Mac, Vulkan/DX12 on Windows/Linux)
+    // Change Backend to Wgpu (Metal on Mac, Vulkan/DX12 on Windows/Linux)
     // Autodiff wrapper is required for training to enable gradient tracking.
     type TrainBackend = burn::backend::Autodiff<Wgpu>;
 
-    // 2. Select Device
+    // Select Device
     // 'DefaultDevice' usually picks the most powerful GPU available (e.g., M-series on Mac)
     let device = WgpuDevice::DefaultDevice;
 
