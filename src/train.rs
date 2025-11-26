@@ -75,11 +75,15 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
     // Prepare the Data Loader
     // MnistBatcher handles converting raw images into tensors usable by the backend.
     let batcher = MnistBatcher::<B>::new();
-    let dataloader = DataLoaderBuilder::new(batcher)
+    let dataloader = DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
         .shuffle(42) // Fixed seed for reproducibility during shuffling
         .num_workers(8) // Parallel data loading
         .build(MnistDataset::train());
+    // Setup Test Loader (Validation)
+    let test_loader = DataLoaderBuilder::new(batcher)
+        .batch_size(config.batch_size)
+        .build(MnistDataset::test());
 
     println!("Starting training...");
 
@@ -148,6 +152,11 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
             "Epoch [{}/{}], Loss: {:.4}",
             epoch, config.num_epochs, avg_loss
         );
+        // --- VALIDATION PHASE ---
+        // We pass a reference to the model so it isn't consumed
+        let val_loss = validate(&model, test_loader.clone());
+
+        println!("Epoch {} | Validation Loss: {:.4}", epoch, val_loss);
     }
 
     // --- SAVING THE MODEL ---
@@ -168,6 +177,40 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
         .expect("Failed to save config");
 
     println!("Model saved to mnist_vae.bin.gz");
+}
+
+/// Runs validation on the test dataset
+use burn::data::dataloader::DataLoader;
+use burn::prelude::ElementConversion;
+use std::sync::Arc;
+pub fn validate<B: Backend>(
+    #[cfg(feature = "dense")] model: &DenseVAE<B>, // Or your specific struct name
+    #[cfg(feature = "conv")] model: &ConvVAE<B>,   // Or your specific struct name
+    dataloader: Arc<dyn DataLoader<B, Tensor<B, 2>>>, // Adjust type to your Batch struct
+) -> f64 {
+    let mut total_loss = 0.0;
+    let mut num_batches = 0;
+
+    // Iterate over test data
+    for batch in dataloader.iter() {
+        let x = batch; // Shape: [batch_size, 784] (or 4D if conv)
+
+        // 1. Forward pass only (no gradients needed effectively)
+        let (recon, mu, logvar) = model.forward(x.clone());
+
+        // 2. Calculate loss
+        // Assuming x is already flattened if your model is Dense,
+        // or your model handles flattening (as per previous refactor).
+        let loss = loss_function(x, recon, mu, logvar);
+
+        // 3. Accumulate scalar value
+        // .into_scalar() brings the data back to CPU f64
+        total_loss += loss.into_scalar().elem::<f64>();
+        num_batches += 1;
+    }
+
+    // Return average loss
+    total_loss / (num_batches as f64)
 }
 
 fn main() {
