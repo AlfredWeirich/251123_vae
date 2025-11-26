@@ -1,3 +1,5 @@
+use burn::module::ModuleVisitor;
+use burn::module::Param;
 use burn::tensor::Distribution;
 use burn::tensor::{Tensor, backend::Backend};
 
@@ -117,4 +119,51 @@ pub fn reparameterize<B: Backend, const D: usize>(
 
     // z = mu + eps * std
     mu + eps * std
+}
+
+pub struct ModelTreePrinter {
+    indent: usize,
+}
+
+impl ModelTreePrinter {
+    pub fn new() -> Self {
+        Self { indent: 0 }
+    }
+
+    fn print_indent(&self) {
+        print!("{}", "  ".repeat(self.indent));
+    }
+}
+
+// 2. Implement the ModuleVisitor trait
+impl<B: Backend> ModuleVisitor<B> for ModelTreePrinter {
+    // Called when entering a module (e.g., "conv1", "layer_norm")
+    fn enter_module(&mut self, name: &str, _container_type: &str) {
+        self.print_indent();
+        println!("Module: {}", name);
+        self.indent += 1;
+    }
+
+    // Called when exiting a module
+    fn exit_module(&mut self, _name: &str, _container_type: &str) {
+        self.indent -= 1;
+    }
+
+    // Called for every float tensor parameter (weights, biases)
+    fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+        self.print_indent();
+        // You can inspect the tensor here (e.g., param.shape())
+        println!("Param (Float): {:?} [ID: {}]", param.shape(), param.id);
+    }
+
+    // You can also implement visit_int and visit_bool if needed
+    fn visit_int<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Int>>) {
+        self.print_indent();
+        println!("Param (Int): {:?}", param.shape());
+    }
+
+    fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Bool>>) {
+        self.print_indent();
+        println!("Param (Bool): {:?}", param.shape());
+    }
 }
