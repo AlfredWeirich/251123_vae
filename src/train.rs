@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+use burn::data::dataloader::DataLoader;
+use burn::prelude::ElementConversion;
 use burn::prelude::ToElement;
 use burn::record::FullPrecisionSettings;
 use burn::tensor::{Tensor, backend::Backend};
@@ -11,9 +13,6 @@ use burn::{
     record::BinFileRecorder, // Import for saving/loading
     tensor::backend::AutodiffBackend,
 };
-use burn::data::dataloader::DataLoader;
-use burn::prelude::ElementConversion;
-
 
 use vae::LATENT_DIM;
 use vae::ModelTreePrinter;
@@ -195,15 +194,23 @@ pub fn validate<B: Backend>(
 
     // Iterate over test data
     for batch in dataloader.iter() {
-        let x = batch; // Shape: [batch_size, 784] (or 4D if conv)
+        let x_flat = batch; // Shape: [batch_size, 784] (or 4D if conv)
 
-        // 1. Forward pass only (no gradients needed effectively)
-        let (recon, mu, logvar) = model.forward(x.clone());
+        #[cfg(feature = "conv")]
+        // Reshape for Conv Network: [B, 784] -> [B, 1, 28, 28]
+        // Convolutional layers require (Batch, Channels, Height, Width) format.
+        let x_img = x_flat.clone().reshape([0, 1, 28, 28]);
+
+        // Forward pass: Returns reconstructed input, mean (mu), and log-variance (sigma)
+        #[cfg(feature = "dense")]
+        let (recon_x, mu, sigma) = model.forward(x_flat.clone());
+        #[cfg(feature = "conv")]
+        let (recon_x, mu, sigma) = model.forward(x_img.clone());
 
         // 2. Calculate loss
         // Assuming x is already flattened if your model is Dense,
         // or your model handles flattening (as per previous refactor).
-        let loss = loss_function(x, recon, mu, logvar);
+        let loss = loss_function(recon_x, x_flat, mu, sigma);
 
         // 3. Accumulate scalar value
         // .into_scalar() brings the data back to CPU f64
