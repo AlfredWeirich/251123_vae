@@ -1,0 +1,40 @@
+[package]
+name = "vae"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+burn = { version = "0.19", features = ["train", "wgpu","vision"] } # 'wgpu' is optional, strictly needed only if using WgpuBackend
+# burn-ndarray = "0.19" # CPU Backend
+burn-wgpu = "0.19" 
+clap = { version = "4.5.53", features = ["derive"] }
+image = "0.25.9"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+tiny_plot_lib = { git = "ssh://git@github.com/AlfredWeirich/tiny_plot_lib.git", branch = "master" }
+iced = {version="0.13.1", features=["canvas", "tokio", "debug", "advanced","image"]}
+
+[[bin]] # Bin to run training
+name = "train"
+path = "src/train.rs"
+
+[[bin]] # Bin to run inference
+name = "infer"
+path = "src/inference.rs"
+
+[[bin]] # Bin to run dynamic morphing of 15x15 digits
+name = "morph_dyn"
+path = "src/morph_dyn.rs"
+
+[[bin]] # Bin to run static morphing of 15x15 digits
+name = "morph_static"
+path = "src/morph_static.rs"
+
+[features]
+# The 'dense' feature enables the dense model implementation
+dense = []
+
+# The 'conv' feature enables the convolutional model implementation
+conv = []
+
+default = ["dense"]
