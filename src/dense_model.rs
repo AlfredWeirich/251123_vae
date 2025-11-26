@@ -8,7 +8,7 @@ use burn::{
 // --- CONFIG & MODEL DEFINITIONS ---
 
 /// Configuration for a fully-connected (dense) Variational Autoencoder (VAE).
-/// 
+///
 /// This defines the dataset dimensions, architecture hyperparameters,
 /// and training settings. The `Config` derive enables easy serialization
 /// and defaulting via Burn's configuration system.
@@ -35,7 +35,7 @@ pub struct DenseVaeConfig {
 }
 
 /// Encoder network for a dense VAE.
-/// 
+///
 /// Maps input data → hidden representation → latent mean & log-variance.
 /// Produces `(mu, logvar)`, which are later used for the reparameterization
 /// trick. `Relu` activation is used after the first linear layer.
@@ -48,7 +48,7 @@ pub struct DenseEncoder<B: Backend> {
 }
 
 /// Decoder network for a dense VAE.
-/// 
+///
 /// Maps latent vectors → hidden representation → reconstructed input.
 /// Applies a final sigmoid activation so outputs are in (0,1), suitable
 /// for normalized or binary input data (e.g. MNIST).
@@ -124,7 +124,7 @@ impl<B: Backend> DenseEncoder<B> {
 }
 
 /// Full dense VAE model composed of encoder and decoder.
-/// 
+///
 /// Provides methods for sampling via the reparameterization trick
 /// and performing a full forward pass returning reconstructions as
 /// well as latent parameters.

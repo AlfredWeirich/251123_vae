@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 
 // --- IMPORTS ---
-use iced::{time, widget::container, Element, Length, Task, Subscription};
+use iced::{Element, Length, Subscription, Task, time, widget::container};
 use std::time::Instant;
 
 // Burn Imports
@@ -57,11 +57,9 @@ fn main() -> iced::Result {
 
     // 2. Load VAE config and pretrained weights (before starting UI)
     #[cfg(feature = "dense")]
-    let config = DenseVaeConfig::load("vae_model/mnist_vae.config.json")
-        .expect("Config not found");
+    let config = DenseVaeConfig::load("vae_model/mnist_vae.config.json").expect("Config not found");
     #[cfg(feature = "conv")]
-    let config = ConvVaeConfig::load("vae_model/mnist_vae.config.json")
-        .expect("Config not found");
+    let config = ConvVaeConfig::load("vae_model/mnist_vae.config.json").expect("Config not found");
 
     let record = BinFileRecorder::<FullPrecisionSettings>::new()
         .load("vae_model/mnist_vae".into(), &device)
@@ -170,8 +168,12 @@ impl VaeApp {
 
                         // Fill dimensions carefully up to latent_dim
                         batch_vec.push(z_x); // dim 0
-                        if self.latent_dim > 1 { batch_vec.push(z_y); }      // dim 1
-                        if self.latent_dim > 2 { batch_vec.push(self.current_z2); } // dim 2
+                        if self.latent_dim > 1 {
+                            batch_vec.push(z_y);
+                        } // dim 1
+                        if self.latent_dim > 2 {
+                            batch_vec.push(self.current_z2);
+                        } // dim 2
 
                         // Fill extra dims with zero
                         for _ in 3..self.latent_dim {
@@ -234,7 +236,3 @@ impl VaeApp {
         time::every(std::time::Duration::from_millis(100)).map(Message::Tick)
     }
 }
-
-
-
-

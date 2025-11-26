@@ -164,4 +164,3 @@ fn main() {
     println!("Opening Window...");
     let _ = tiny_plot_lib::run_static(leaked_title, m_chart);
 }
-

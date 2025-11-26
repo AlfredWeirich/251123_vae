@@ -74,7 +74,7 @@ impl<B: Backend> Batcher<B, MnistItem, Tensor<B, 2>> for MnistBatcher<B> {
             .iter()
             .flat_map(|item| {
                 item.image
-                    .iter()             // iterate rows
+                    .iter() // iterate rows
                     .flat_map(|row| row.iter()) // iterate pixels
                     .map(|&pixel| pixel / 255.0) // normalize to [0,1]
             })
