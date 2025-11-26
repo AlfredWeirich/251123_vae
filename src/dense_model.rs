@@ -1,8 +1,9 @@
+use crate::reparameterize;
 use burn::{
     config::Config,
     module::Module,
     nn::{Linear, LinearConfig, Relu},
-    tensor::{Distribution, Tensor, backend::Backend},
+    tensor::{Tensor, backend::Backend},
 };
 
 // --- CONFIG & MODEL DEFINITIONS ---
@@ -145,27 +146,6 @@ impl<B: Backend> DenseVAE<B> {
         }
     }
 
-    /// Applies the reparameterization trick to obtain a latent sample.
-    ///
-    /// Converts `(mu, logvar)` into a sampled `z` via:
-    /// `z = mu + eps * exp(0.5 * logvar)`
-    ///
-    /// This enables gradient-based optimization through stochastic sampling.
-    ///
-    /// # Arguments
-    /// * `mu` – Latent mean.
-    /// * `sigma` – Latent log-variance.
-    ///
-    /// # Returns
-    /// A sampled latent vector with the same shape as `mu`.
-    pub fn reparameterize(&self, mu: Tensor<B, 2>, sigma: Tensor<B, 2>) -> Tensor<B, 2> {
-        // Convert log-variance to standard deviation
-        let std = sigma.mul_scalar(0.5).exp();
-        // Sample epsilon ~ N(0, 1)
-        let eps = Tensor::random_like(&std, Distribution::Normal(0.0, 1.0));
-        mu + eps * std
-    }
-
     /// Full VAE forward pass.
     ///
     /// # Arguments
@@ -179,7 +159,7 @@ impl<B: Backend> DenseVAE<B> {
     pub fn forward(&self, x: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 2>, Tensor<B, 2>) {
         let (mu, sigma) = self.encoder.forward(x);
         // Sample latent vector via reparameterization
-        let z = self.reparameterize(mu.clone(), sigma.clone());
+        let z = reparameterize(mu.clone(), sigma.clone());
         // Decode the latent sample
         let recon_x = self.decoder.forward(z);
         (recon_x, mu, sigma)

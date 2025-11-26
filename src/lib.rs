@@ -1,3 +1,4 @@
+use burn::tensor::Distribution;
 use burn::tensor::{Tensor, backend::Backend};
 
 #[cfg(feature = "conv")]
@@ -99,4 +100,21 @@ pub fn build_rgb_bytes(pixels: &[f32]) -> Vec<u8> {
         res.push(u); // B
     }
     res
+}
+
+/// Applies the reparameterization trick to obtain a latent sample.
+/// Shared logic for all VAE models.
+pub fn reparameterize<B: Backend, const D: usize>(
+    mu: Tensor<B, D>,
+    logvar: Tensor<B, D>,
+) -> Tensor<B, D> {
+    // Convert log-variance to standard deviation
+    // std = exp(0.5 * logvar)
+    let std = logvar.mul_scalar(0.5).exp();
+
+    // Sample epsilon ~ N(0, 1)
+    let eps = Tensor::random_like(&std, Distribution::Normal(0.0, 1.0));
+
+    // z = mu + eps * std
+    mu + eps * std
 }

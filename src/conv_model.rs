@@ -1,3 +1,4 @@
+use crate::reparameterize;
 use burn::{
     config::Config,
     module::Module,
@@ -5,7 +6,7 @@ use burn::{
         Linear, LinearConfig, PaddingConfig2d, Relu,
         conv::{Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig},
     },
-    tensor::{Distribution, Tensor, backend::Backend},
+    tensor::{Tensor, backend::Backend},
 };
 
 // --- CONFIG ---
@@ -228,27 +229,6 @@ impl<B: Backend> ConvVAE<B> {
         }
     }
 
-    /// Apply the reparameterization trick.
-    ///
-    /// Computes:
-    /// ```
-    /// std = exp(0.5 * logvar)
-    /// eps ~ N(0, 1)
-    /// z = mu + eps * std
-    /// ```
-    ///
-    /// # Arguments
-    /// * `mu` – Mean of the approximate posterior
-    /// * `sigma` – Log-variance of the approximate posterior
-    ///
-    /// # Returns
-    /// Latent sample `z` of shape `[Batch, latent_dim]`
-    pub fn reparameterize(&self, mu: Tensor<B, 2>, sigma: Tensor<B, 2>) -> Tensor<B, 2> {
-        let std = sigma.mul_scalar(0.5).exp();
-        let eps = Tensor::random_like(&std, Distribution::Normal(0.0, 1.0));
-        mu + eps * std
-    }
-
     /// Full VAE forward pass.
     ///
     /// # Arguments
@@ -268,7 +248,7 @@ impl<B: Backend> ConvVAE<B> {
         let (mu, sigma) = self.encoder.forward(x);
 
         // Reparameterization trick
-        let z = self.reparameterize(mu.clone(), sigma.clone());
+        let z = reparameterize(mu.clone(), sigma.clone());
 
         // Decode latent vector → image
         let recon_img = self.decoder.forward(z);
