@@ -1,7 +1,9 @@
 #![recursion_limit = "256"]
 
+use burn::module::{ModuleVisitor, Param};
 use burn::prelude::ToElement;
 use burn::record::FullPrecisionSettings;
+use burn::tensor::{Tensor, backend::Backend};
 use burn::{
     config::Config,
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
@@ -58,7 +60,7 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
     let mut model = ConvVAE::<B>::new(&config, &device);
 
     let mut visitor = ModelTreePrinter::new();
-    
+
     // This triggers the traversal
     model.visit(&mut visitor);
 
@@ -183,12 +185,6 @@ fn main() {
 // type MyBackend = burn::backend::Autodiff<NdArray>;
 // let device = NdArrayDevice::Cpu;
 
-
-
-use burn::module::{ModuleVisitor, Param};
-use burn::tensor::{backend::Backend, Tensor};
-
-// 1. Define your visitor struct
 pub struct ModelTreePrinter {
     indent: usize,
 }
@@ -229,7 +225,7 @@ impl<B: Backend> ModuleVisitor<B> for ModelTreePrinter {
         self.print_indent();
         println!("Param (Int): {:?}", param.shape());
     }
-    
+
     fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Bool>>) {
         self.print_indent();
         println!("Param (Bool): {:?}", param.shape());
