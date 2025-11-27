@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 use burn::data::dataloader::DataLoader;
+use burn::module::AutodiffModule;
 use burn::prelude::ElementConversion;
 use burn::prelude::ToElement;
 use burn::record::FullPrecisionSettings;
@@ -78,14 +79,15 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 
     // Prepare the Data Loader
     // MnistBatcher handles converting raw images into tensors usable by the backend.
-    let batcher = MnistBatcher::<B>::new();
-    let dataloader = DataLoaderBuilder::new(batcher.clone())
+    let train_batcher = MnistBatcher::<B>::new();
+    let train_loader = DataLoaderBuilder::new(train_batcher.clone())
         .batch_size(config.batch_size)
         .shuffle(42) // Fixed seed for reproducibility during shuffling
         .num_workers(8) // Parallel data loading
         .build(MnistDataset::train());
     // Setup Test Loader (Validation)
-    let test_loader = DataLoaderBuilder::new(batcher)
+    let test_batcher = MnistBatcher::<B::InnerBackend>::new();
+    let test_loader = DataLoaderBuilder::new(test_batcher)
         .batch_size(config.batch_size)
         .build(MnistDataset::test());
 
@@ -99,7 +101,7 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
         //for batch in dataloader.iter() {
 
         // Iterate over batches. Each 'batch' is a tensor of flattened images.
-        for (batch_num, batch) in dataloader.iter().enumerate() {
+        for (batch_num, batch) in train_loader.iter().enumerate() {
             let x_flat = batch;
 
             #[cfg(feature = "conv")]
@@ -115,24 +117,23 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 
             // Debug print: Inspect latent variables for the first batch of the epoch.
             // Helpful to ensure values aren't exploding (NaN) or collapsing to zero.
-            if batch_num == 0 {
-                println!(
-                    "----------------------------mu: {:?}",
-                    mu.to_data()
-                        .as_slice::<f32>()
-                        .expect("GET MU")
-                        .get(0..LATENT_DIM)
-                );
-                println!(
-                    "----------------------------log: {:?}",
-                    sigma
-                        .to_data()
-                        .as_slice::<f32>()
-                        .expect("GET MU")
-                        .get(0..LATENT_DIM)
-                );
-            }
-            //batch_num += 1;
+            // if batch_num == 0 {
+            //     println!(
+            //         "----------------------------mu: {:?}",
+            //         mu.to_data()
+            //             .as_slice::<f32>()
+            //             .expect("GET MU")
+            //             .get(0..LATENT_DIM)
+            //     );
+            //     println!(
+            //         "----------------------------log: {:?}",
+            //         sigma
+            //             .to_data()
+            //             .as_slice::<f32>()
+            //             .expect("GET MU")
+            //             .get(0..LATENT_DIM)
+            //     );
+            // }
 
             // Compute VAE Loss:
             // 1. Reconstruction Loss (MSE or BCE): How close is output to input?
@@ -184,13 +185,20 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 }
 
 /// Runs validation on the test dataset
-pub fn validate<B: Backend>(
+pub fn validate<B: Backend + burn::tensor::backend::AutodiffBackend>(
     #[cfg(feature = "dense")] model: &DenseVAE<B>, // Or your specific struct name
     #[cfg(feature = "conv")] model: &ConvVAE<B>,   // Or your specific struct name
-    dataloader: Arc<dyn DataLoader<B, Tensor<B, 2>>>, // Adjust type to your Batch struct
+    dataloader: Arc<
+        dyn DataLoader<
+                <B as AutodiffBackend>::InnerBackend,
+                burn::Tensor<<B as AutodiffBackend>::InnerBackend, 2>,
+            >,
+    >,
 ) -> f64 {
     let mut total_loss = 0.0;
     let mut num_batches = 0;
+
+    let model_valid = model.valid();
 
     // Iterate over test data
     for batch in dataloader.iter() {
@@ -205,7 +213,7 @@ pub fn validate<B: Backend>(
         #[cfg(feature = "dense")]
         let (recon_x, mu, sigma) = model.forward(x_flat.clone());
         #[cfg(feature = "conv")]
-        let (recon_x, mu, sigma) = model.forward(x_img.clone());
+        let (recon_x, mu, sigma) = model_valid.forward(x_img.clone());
 
         // 2. Calculate loss
         // Assuming x is already flattened if your model is Dense,
@@ -214,7 +222,8 @@ pub fn validate<B: Backend>(
 
         // 3. Accumulate scalar value
         // .into_scalar() brings the data back to CPU f64
-        total_loss += loss.into_scalar().elem::<f64>();
+        // total_loss += loss.into_scalar().elem::<f64>();
+        total_loss += loss.into_scalar().to_f64();
         num_batches += 1;
     }
 

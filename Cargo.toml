@@ -37,4 +37,4 @@ dense = []
 # The 'conv' feature enables the convolutional model implementation
 conv = []
 
-default = ["dense"]
+default = ["conv"]
