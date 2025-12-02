@@ -1,12 +1,11 @@
 use burn::{
     data::{dataloader::batcher::Batcher, dataset::vision::MnistItem},
-    tensor::{Tensor, TensorData, backend::Backend},
+    tensor::{Int, Tensor, TensorData, backend::Backend},
 };
 
 use std::marker::PhantomData;
 
 // --- Data Handling ---
-
 /// A batcher for MNIST data that converts a list of `MnistItem`s
 /// (each containing a 28×28 grayscale image) into a normalized tensor
 /// suitable for feeding into a neural network.
@@ -34,7 +33,7 @@ pub struct MnistBatcher<B: Backend> {
 }
 
 impl<B: Backend> MnistBatcher<B> {
-    /// Creates a new MNIST batcher instance.
+        /// Creates a new MNIST batcher instance.
     ///
     /// Typically used when constructing a dataset loader for MNIST.
     pub fn new() -> Self {
@@ -43,16 +42,17 @@ impl<B: Backend> MnistBatcher<B> {
 }
 
 impl<B: Backend> Default for MnistBatcher<B> {
-    /// Creates a default MNIST batcher.
+        /// Creates a default MNIST batcher.
     ///
     /// Equivalent to calling [`MnistBatcher::new()`].
-    fn default() -> Self {
+        fn default() -> Self {
         Self::new()
     }
 }
 
-impl<B: Backend> Batcher<B, MnistItem, Tensor<B, 2>> for MnistBatcher<B> {
-    /// Converts a vector of MNIST items into a single batched tensor.
+
+impl<B: Backend> Batcher<B, MnistItem, (Tensor<B, 2>, Tensor<B, 1, Int>)> for MnistBatcher<B> {
+        /// Converts a vector of MNIST items into a single batched tensor.
     ///
     /// # Arguments
     /// * `items` — A vector of `MnistItem`s, each containing a 28×28 image grid.
@@ -66,21 +66,38 @@ impl<B: Backend> Batcher<B, MnistItem, Tensor<B, 2>> for MnistBatcher<B> {
     /// - Flattens each image (28×28 → 784)
     /// - Normalizes pixel intensities from 0–255 into 0.0–1.0
     /// - Packs into a tensor ready for training or inference
-    fn batch(&self, items: Vec<MnistItem>, device: &B::Device) -> Tensor<B, 2> {
+    fn batch(
+        &self,
+        items: Vec<MnistItem>,
+        device: &B::Device,
+    ) -> (Tensor<B, 2>, Tensor<B, 1, Int>) {
         let batch_size = items.len();
 
-        // Flatten each MNIST image (Vec<Vec<u8>>) into normalized f32 values.
-        let images: Vec<f32> = items
+        // --- Process Images ---
+        // Flatten 28x28 images and normalize to [0.0, 1.0]
+        let images_flattened: Vec<f32> = items
             .iter()
             .flat_map(|item| {
                 item.image
-                    .iter() // iterate rows
-                    .flat_map(|row| row.iter()) // iterate pixels
-                    .map(|&pixel| pixel / 255.0) // normalize to [0,1]
+                    .iter()
+                    .flat_map(|row| row.iter())
+                    .map(|&pixel| pixel as f32 / 255.0)
             })
             .collect();
 
-        // Convert into Burn tensor of shape [batch_size, 784]
-        Tensor::from_floats(TensorData::new(images, vec![batch_size, 784]), device)
+        let images = Tensor::from_floats(
+            TensorData::new(images_flattened, vec![batch_size, 784]),
+            device,
+        );
+
+        // --- Process Labels ---
+        // Extract labels and convert to i64 (standard integer type for Burn)
+        let labels_data: Vec<i64> = items.iter().map(|item| item.label as i64).collect();
+
+        let labels = Tensor::from_ints(TensorData::new(labels_data, vec![batch_size]), device);
+
+        (images, labels)
     }
 }
+
+
