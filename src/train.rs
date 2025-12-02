@@ -1,11 +1,13 @@
 #![recursion_limit = "256"]
 
+// https://www.ibm.com/think/topics/variational-autoencoder
+// https://burn.dev/books/burn/building-blocks/backend.html
+
 use burn::data::dataloader::DataLoader;
 use burn::module::AutodiffModule;
-use burn::prelude::ElementConversion;
 use burn::prelude::ToElement;
 use burn::record::FullPrecisionSettings;
-use burn::tensor::{Tensor, backend::Backend};
+use burn::tensor::backend::Backend;
 use burn::{
     config::Config,
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
@@ -53,8 +55,6 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
     #[cfg(feature = "conv")]
     let config = ConvVaeConfig::new().with_latent_dim(LATENT_DIM);
 
-    // Override default latent dimension with global constant
-    // config.latent_dim = LATENT_DIM;
     println!("Configuration: {:?}", config);
     println!("Using Device: {:?}", device);
 
@@ -68,6 +68,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 
     // This triggers the traversal
     model.visit(&mut visitor);
+    let num_param = model.num_params();
+    println!("Model Params: {}", num_param);
 
     // Configure the Adam optimizer with Weight Decay (L2 Regularization)
     // to prevent overfitting and stabilize training.
@@ -93,6 +95,10 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 
     println!("Starting training...");
 
+    // We pass a reference to the model so it isn't consumed
+    let val_loss = validate(&model, test_loader.clone());
+    println!("Pre Train Validation Loss: {:.4}", val_loss);
+
     for epoch in 1..=config.num_epochs {
         let mut total_loss = 0.0;
         let mut batch_count = 0;
@@ -101,8 +107,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
         //for batch in dataloader.iter() {
 
         // Iterate over batches. Each 'batch' is a tensor of flattened images.
-        for (batch_num, batch) in train_loader.iter().enumerate() {
-            let x_flat = batch;
+        for (_batch_num, (train_images, _labels)) in train_loader.iter().enumerate() {
+            let x_flat = train_images;
 
             #[cfg(feature = "conv")]
             // Reshape for Conv Network: [B, 784] -> [B, 1, 28, 28]
@@ -117,7 +123,7 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
 
             // Debug print: Inspect latent variables for the first batch of the epoch.
             // Helpful to ensure values aren't exploding (NaN) or collapsing to zero.
-            // if batch_num == 0 {
+            // if _batch_num == 0 {
             //     println!(
             //         "----------------------------mu: {:?}",
             //         mu.to_data()
@@ -160,7 +166,6 @@ fn training_loop<B: AutodiffBackend>(device: B::Device) {
         // --- VALIDATION PHASE ---
         // We pass a reference to the model so it isn't consumed
         let val_loss = validate(&model, test_loader.clone());
-
         println!("Epoch {} | Validation Loss: {:.4}", epoch, val_loss);
     }
 
@@ -191,7 +196,10 @@ pub fn validate<B: Backend + burn::tensor::backend::AutodiffBackend>(
     dataloader: Arc<
         dyn DataLoader<
                 <B as AutodiffBackend>::InnerBackend,
-                burn::Tensor<<B as AutodiffBackend>::InnerBackend, 2>,
+                (
+                    burn::Tensor<<B as AutodiffBackend>::InnerBackend, 2>,
+                    burn::Tensor<<B as AutodiffBackend>::InnerBackend, 1, burn::tensor::Int>,
+                ),
             >,
     >,
 ) -> f64 {
@@ -201,8 +209,8 @@ pub fn validate<B: Backend + burn::tensor::backend::AutodiffBackend>(
     let model_valid = model.valid();
 
     // Iterate over test data
-    for batch in dataloader.iter() {
-        let x_flat = batch; // Shape: [batch_size, 784] (or 4D if conv)
+    for (test_image, _label) in dataloader.iter() {
+        let x_flat = test_image; // Shape: [batch_size, 784] (or 4D if conv)
 
         #[cfg(feature = "conv")]
         // Reshape for Conv Network: [B, 784] -> [B, 1, 28, 28]
@@ -211,7 +219,7 @@ pub fn validate<B: Backend + burn::tensor::backend::AutodiffBackend>(
 
         // Forward pass: Returns reconstructed input, mean (mu), and log-variance (sigma)
         #[cfg(feature = "dense")]
-        let (recon_x, mu, sigma) = model.forward(x_flat.clone());
+        let (recon_x, mu, sigma) = model_valid.forward(x_flat.clone());
         #[cfg(feature = "conv")]
         let (recon_x, mu, sigma) = model_valid.forward(x_img.clone());
 
