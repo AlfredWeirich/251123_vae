@@ -2,3 +2,4 @@
 *.png
 Cargo.lock
 /vae_model
+.DS_Store
