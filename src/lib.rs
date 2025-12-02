@@ -20,7 +20,7 @@ pub const MNIST_DIM_Y: u32 = 28;
 /// This value is used globally by the inference tool, training process,
 /// and CLI interface. Adjusting this changes the representational capacity
 /// of the bottleneck layer.
-pub const LATENT_DIM: usize = 3;
+pub const LATENT_DIM: usize = 4;
 
 // --- Loss Function ---
 
@@ -31,21 +31,15 @@ pub const LATENT_DIM: usize = 3;
 ///
 /// 1. **Reconstruction Loss**  
 ///    Using Binary Cross-Entropy (BCE):
-///    ```text
 ///    BCE = -[ x*log(x̂) + (1−x)*log(1−x̂) ]
-///    ```
 ///    This encourages the decoder to accurately reproduce the input.
 ///
 /// 2. **KL Divergence**  
 ///    Between the approximate posterior `q(z|x)` and the standard normal prior:
-///    ```text
 ///    KL = -0.5 * Σ [ 1 + logσ² − μ² − exp(logσ²) ]
-///    ```
 ///
 /// The final loss is:
-/// ```text
 /// Loss = BCE + KL
-/// ```
 ///
 /// # Arguments
 ///
@@ -85,7 +79,7 @@ pub fn loss_function<B: Backend>(
         .mean()
         .mul_scalar(0.5);
 
-    // Total ELBO loss
+    // Total loss
     recon_loss + kld
 }
 
@@ -121,6 +115,8 @@ pub fn reparameterize<B: Backend, const D: usize>(
     mu + eps * std
 }
 
+
+/// A visitor that prints the model's module tree and parameters.
 pub struct ModelTreePrinter {
     indent: usize,
 }
