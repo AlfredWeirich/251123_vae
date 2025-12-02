@@ -1,3 +1,14 @@
+//! # VAE Core Utilities
+//!
+//! This module contains shared constants, mathematical functions, and debugging utilities
+//! used across both Convolutional and Dense Variational Autoencoder implementations.
+//!
+//! Key components:
+//! * **Loss Calculation**: Implementation of the Evidence Lower Bound (ELBO).
+//! * **Sampling**: The reparameterization trick for differentiable stochastic sampling.
+//! * **Visualization Helpers**: Utilities for converting tensor data to image formats.
+//! * **Introspection**: A module visitor for debugging model architecture and parameter shapes.
+
 use burn::module::ModuleVisitor;
 use burn::module::Param;
 use burn::tensor::Distribution;
@@ -9,84 +20,92 @@ pub mod conv_model;
 pub mod dense_model;
 pub mod mnist_data;
 
-/// Width of MNIST images in pixels (28).
+// --- CONSTANTS ---
+
+/// Width of MNIST images in pixels.
 pub const MNIST_DIM_X: u32 = 28;
 
-/// Height of MNIST images in pixels (28).
+/// Height of MNIST images in pixels.
 pub const MNIST_DIM_Y: u32 = 28;
 
-/// Dimensionality of the VAE latent space.
+/// Dimensionality of the VAE latent space (z).
 ///
-/// This value is used globally by the inference tool, training process,
-/// and CLI interface. Adjusting this changes the representational capacity
-/// of the bottleneck layer.
+/// This defines the size of the information bottleneck.
+/// * A smaller dimension forces higher compression/abstraction.
+/// * A larger dimension allows for better reconstruction but may lead to overfitting.
+///
+/// This constant is used globally for model configuration and CLI arguments.
 pub const LATENT_DIM: usize = 4;
 
-// --- Loss Function ---
+// --- LOSS FUNCTION ---
 
-/// Computes the Variational Autoencoder (VAE) loss function.
+/// Computes the VAE Loss Function (Negative Evidence Lower Bound).
 ///
-/// This function implements the standard **Evidence Lower Bound (ELBO)** loss,
-/// composed of:
+/// The loss is composed of two conflicting objectives:
+/// 1. **Reconstruction Loss** (Binary Cross Entropy): Encourages the decoder to accurately reproduce the input.
+/// 2. **Regularization** (KL Divergence): Forces the latent distribution `q(z|x)` to approximate a
+///    standard normal distribution `N(0, 1)`.
 ///
-/// 1. **Reconstruction Loss**  
-///    Using Binary Cross-Entropy (BCE):
-///    BCE = -[ x*log(x̂) + (1−x)*log(1−x̂) ]
-///    This encourages the decoder to accurately reproduce the input.
+/// # Formula
 ///
-/// 2. **KL Divergence**  
-///    Between the approximate posterior `q(z|x)` and the standard normal prior:
-///    KL = -0.5 * Σ [ 1 + logσ² − μ² − exp(logσ²) ]
+/// Loss = Loss_BCE + Loss_KL
 ///
-/// The final loss is:
-/// Loss = BCE + KL
+/// Where:
+///
+/// * **Loss_BCE** = `-Σ [x · log(x̂) + (1−x) · log(1−x̂)]`
+/// * **Loss_KL**  = `0.5 · Σ [exp(log(σ²)) + μ² - log(σ²) - 1]`
 ///
 /// # Arguments
-///
-/// * `recon_x` — Decoder output with shape `[batch, input_dim]`  
-/// * `x` — Ground-truth inputs, same shape as `recon_x`  
-/// * `mu` — Latent mean from encoder, shape `[batch, latent_dim]`  
-/// * `sigma` — Latent log-variance from encoder, shape `[batch, latent_dim]`  
+/// * `recon_x` - The reconstructed output (x̂) from the decoder. Shape: `(Batch, Input_Dim)`. Values in range `[0, 1]`.
+/// * `x` - The original ground truth input. Shape: `(Batch, Input_Dim)`.
+/// * `mu` - The predicted mean (μ) of the latent Gaussian. Shape: `(Batch, Latent_Dim)`.
+/// * `sigma` - The predicted log-variance (log(σ²)) of the latent Gaussian. Shape: `(Batch, Latent_Dim)`.
 ///
 /// # Returns
-///
-/// A tensor containing a single scalar loss value (shape `[1]`), averaged across the batch.
+/// A scalar tensor representing the mean loss over the batch.
 pub fn loss_function<B: Backend>(
     recon_x: Tensor<B, 2>,
     x: Tensor<B, 2>,
     mu: Tensor<B, 2>,
     sigma: Tensor<B, 2>,
 ) -> Tensor<B, 1> {
-    // Numerical stability for log(x) calls
+    // Epsilon for numerical stability to prevent log(0) resulting in NaN/Inf.
     let eps = 1e-8;
 
-    // Clamp predicted pixels so log() never receives 0.0 or 1.0
+    // Clamp predicted values to [eps, 1.0 - eps] before passing to log().
     let recon_clamp = recon_x.clamp(eps, 1.0 - eps);
 
-    // Binary cross-entropy:
-    // BCE = -( x * log(x̂) + (1 - x) * log(1 - x̂) )
+    // Compute Binary Cross-Entropy (BCE)
+    // Formula: -( x * log(x̂) + (1 - x) * log(1 - x̂) )
     let bce = (x.clone() * recon_clamp.clone().log()
         + x.clone().neg().add_scalar(1.0) * recon_clamp.neg().add_scalar(1.0).log())
     .neg();
 
-    // Reconstruction loss: mean over batch
+    // Reconstruction Loss: Sum over features, Mean over batch.
     let recon_loss = bce.sum_dim(1).mean();
 
-    // KL divergence:
-    // KL = 0.5 * Σ( exp(logvar) + mu^2 - logvar - 1 )
+    // Compute Kullback-Leibler (KL) Divergence analytically.
+    // Measures the difference between the learned distribution and N(0, 1).
+    // Formula: 0.5 * sum( exp(logvar) + mu^2 - logvar - 1 )
     let kld = (sigma.clone().exp() + mu.powf_scalar(2.0) - sigma - 1.0)
         .sum_dim(1)
-        .mean()
+        .mean() // Mean over batch
         .mul_scalar(0.5);
 
-    // Total loss
+    // Total Loss = Reconstruction + Regularization
     recon_loss + kld
 }
 
-/// Convert grayscale floating-point pixel values `[0.0–1.0]`
-/// into RGB byte values `[0–255]` triplicated (R=G=B).
+/// Converts normalized floating-point pixel data into raw RGB bytes.
 ///
-/// This is required because the chart viewer expects raw RGB pixel buffers.
+/// Used for visualization tools that require `u8` buffers.
+///
+/// # Arguments
+/// * `pixels` - A slice of floating point values in range `[0.0, 1.0]`.
+///
+/// # Returns
+/// A vector of bytes where every grayscale pixel is expanded to three RGB bytes.
+/// Example: `0.5` -> `[127, 127, 127]`.
 pub fn build_rgb_bytes(pixels: &[f32]) -> Vec<u8> {
     let mut res = Vec::with_capacity(pixels.len() * 3);
     for &val in pixels {
@@ -98,66 +117,83 @@ pub fn build_rgb_bytes(pixels: &[f32]) -> Vec<u8> {
     res
 }
 
-/// Applies the reparameterization trick to obtain a latent sample.
-/// Shared logic for all VAE models.
+/// Implements the Reparameterization Trick.
+///
+/// Allows backpropagation to flow through the stochastic sampling node in the network.
+/// Instead of sampling `z ~ N(μ, σ²)` directly (which is non-differentiable),
+/// we sample noise `ε ~ N(0, 1)` and compute:
+///
+/// z = μ + σ · ε
+///
+/// # Arguments
+/// * `mu` - The mean vector (μ).
+/// * `logvar` - The log-variance vector (log(σ²)).
+///
+/// # Returns
+/// A sampled latent vector `z` compatible with backpropagation.
 pub fn reparameterize<B: Backend, const D: usize>(
     mu: Tensor<B, D>,
     logvar: Tensor<B, D>,
 ) -> Tensor<B, D> {
-    // Convert log-variance to standard deviation
-    // std = exp(0.5 * logvar)
+    // Convert log-variance to standard deviation: σ = exp(0.5 * logvar)
     let std = logvar.mul_scalar(0.5).exp();
 
-    // Sample epsilon ~ N(0, 1)
+    // Sample epsilon (noise) from Standard Normal Distribution N(0, 1)
     let eps = Tensor::random_like(&std, Distribution::Normal(0.0, 1.0));
 
-    // z = mu + eps * std
+    // Scale and shift the noise
     mu + eps * std
 }
 
+// --- MODEL INSPECTION ---
 
-/// A visitor that prints the model's module tree and parameters.
+/// A debugging utility for inspecting Burn model architectures.
+///
+/// Implements the `ModuleVisitor` trait to traverse the model tree recursively,
+/// printing module names and parameter shapes (e.g., Weights, Biases).
 pub struct ModelTreePrinter {
     indent: usize,
 }
 
 impl ModelTreePrinter {
+    /// Creates a new printer starting at indentation level 0.
     pub fn new() -> Self {
         Self { indent: 0 }
     }
 
+    /// Helper to print current indentation.
     fn print_indent(&self) {
         print!("{}", "  ".repeat(self.indent));
     }
 }
 
-// 2. Implement the ModuleVisitor trait
 impl<B: Backend> ModuleVisitor<B> for ModelTreePrinter {
-    // Called when entering a module (e.g., "conv1", "layer_norm")
+    /// Called when the visitor enters a child module.
     fn enter_module(&mut self, name: &str, _container_type: &str) {
         self.print_indent();
         println!("Module: {}", name);
         self.indent += 1;
     }
 
-    // Called when exiting a module
+    /// Called when the visitor finishes a module.
     fn exit_module(&mut self, _name: &str, _container_type: &str) {
         self.indent -= 1;
     }
 
-    // Called for every float tensor parameter (weights, biases)
+    /// Called for floating-point parameters (Weights, Biases).
+    /// Prints the parameter shape and unique ID.
     fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
         self.print_indent();
-        // You can inspect the tensor here (e.g., param.shape())
         println!("Param (Float): {:?} [ID: {}]", param.shape(), param.id);
     }
 
-    // You can also implement visit_int and visit_bool if needed
+    /// Called for integer parameters.
     fn visit_int<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Int>>) {
         self.print_indent();
         println!("Param (Int): {:?}", param.shape());
     }
 
+    /// Called for boolean parameters.
     fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Bool>>) {
         self.print_indent();
         println!("Param (Bool): {:?}", param.shape());
