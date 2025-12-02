@@ -25,16 +25,19 @@ use tiny_plot_lib::{GridItem, MultiChart, RawImage};
 // --- CONSTANTS ---
 
 /// Number of rows in the visualization grid.
-const GRID_ROWS: usize = 10;
-
 /// Number of columns in the visualization grid.
-const GRID_COLS: usize = 10;
-
+const GRID_COLS: usize = 15;
+const GRID_ROWS: usize = 15;
 /// Total number of images displayed per frame (rows × cols).
 const GRID_SIZE: usize = GRID_ROWS * GRID_COLS;
 
 /// Latent range span for grid axes (each dimension varies in [-LATENT_RANGE, LATENT_RANGE]).
 const LATENT_RANGE: f32 = 3.0;
+
+/// resize images build from latent space to make them better visible
+const RESIZE_FACTOR: u32 = 3;
+const IMAGE_WIDTH: u32 = 28;
+const IMAGE_HEIGHT: u32 = 28;
 
 // --- MAIN ---
 
@@ -76,9 +79,12 @@ fn main() -> iced::Result {
     for _ in 0..GRID_SIZE {
         items.push(GridItem::Image(RawImage {
             title: "".into(),
-            width: MNIST_DIM_X,
-            height: MNIST_DIM_Y,
-            pixels: vec![0; (MNIST_DIM_X * MNIST_DIM_Y * 3) as usize], // RGB: black
+            width: MNIST_DIM_X * RESIZE_FACTOR,
+            height: MNIST_DIM_Y * RESIZE_FACTOR,
+            pixels: vec![
+                0;
+                (MNIST_DIM_X * MNIST_DIM_Y * 3 * RESIZE_FACTOR * RESIZE_FACTOR) as usize
+            ], // RGB: black
         }));
     }
 
@@ -146,7 +152,10 @@ impl VaeApp {
             Message::Tick(now) => {
                 // 1. Compute dynamic oscillating Z₂ via a sine curve
                 let elapsed = (now - self.start_time).as_secs_f32();
-                self.current_z2 = (elapsed * 0.5).sin() * LATENT_RANGE;
+                let speed = 0.05;
+                let triangle = ((elapsed * speed) % 2.0 - 1.0).abs() * 2.0 - 1.0;
+
+                self.current_z2 = triangle * LATENT_RANGE;
 
                 // 2. Build the latent batch
                 //
@@ -177,10 +186,11 @@ impl VaeApp {
 
                         // Fill extra dims with zero
                         for _ in 3..self.latent_dim {
-                            batch_vec.push(0.0);
+                            batch_vec.push(self.current_z2);
                         }
                     }
                 }
+                //println!("Batch Vector: {:?}", batch_vec);
 
                 // 3. Convert latent batch → a single tensor
                 let z_tensor = Tensor::<Wgpu, 2>::from_floats(
@@ -193,7 +203,7 @@ impl VaeApp {
 
                 // 4. Extract tensor data into CPU memory
                 //
-                // Output shape: [GRID_SIZE, 1, 28, 28]
+                // Output shape: [GRID_SIZE, 1, IMAGE_WIDTH, IMAGE_HEIGHT]
                 let data_stream = reconstruction.into_data();
                 let flat_pixels: Vec<f32> = data_stream.to_vec().unwrap();
 
@@ -209,8 +219,18 @@ impl VaeApp {
                         // Convert grayscale float → RGB byte triplets
                         let rgb_bytes = build_rgb_bytes(img_slice);
 
+                        let img = image::RgbImage::from_raw(IMAGE_WIDTH, IMAGE_HEIGHT, rgb_bytes)
+                            .unwrap();
+                        let resized = image::imageops::resize(
+                            &img,
+                            IMAGE_WIDTH * RESIZE_FACTOR,
+                            IMAGE_HEIGHT * RESIZE_FACTOR,
+                            image::imageops::FilterType::Triangle,
+                        );
+                        let resized_buffer = resized.to_vec();
+
                         // Push update to the chart library
-                        self.multi_chart.update_image_pixels(i, rgb_bytes);
+                        self.multi_chart.set_image_data(i, resized_buffer);
                     }
                 }
             }
