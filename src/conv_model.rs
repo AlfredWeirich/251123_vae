@@ -11,41 +11,52 @@ use burn::{
 
 // --- CONFIG ---
 
-/// Configuration for a convolutional Variational Autoencoder (VAE).
+/// Configuration for the Convolutional Variational Autoencoder (VAE).
 ///
-/// This defines latent dimensionality, convolutional channel depth,
-/// training parameters, and compatibility settings for input shape.
+/// This struct defines the hyperparameters for training and architecture construction.
+/// It includes latent space dimensions, channel depths for convolutional layers,
+/// and batching parameters.
 #[derive(Config, Debug)]
 pub struct ConvVaeConfig {
-    /// Flattened input dimension (e.g. 28×28=784).
-    /// Kept for compatibility with dense-training utilities.
+    /// The size of the flattened input vector (e.g., 28×28 = 784).
+    /// Used primarily for compatibility with loss functions expecting flat vectors.
     #[config(default = 784)]
     pub input_dim: usize,
-    /// Dimensionality of the latent vector.
+
+    /// Dimensionality of the latent space ($z$).
     #[config(default = 20)]
     pub latent_dim: usize,
-    /// Learning rate used during optimization.
+
+    /// Learning rate for the optimizer.
     #[config(default = 1e-3)]
     pub learning_rate: f64,
-    /// Number of training epochs.
+
+    /// Total number of training epochs.
     #[config(default = 25)]
     pub num_epochs: usize,
-    /// Number of samples per training batch.
+
+    /// Mini-batch size for training and inference.
     #[config(default = 128)]
     pub batch_size: usize,
-    /// Base convolution channel depth (first conv layer = `base_channels`).
+
+    /// The number of channels in the first convolutional layer.
+    /// Subsequent layers typically double this depth (e.g., 32 -> 64).
     #[config(default = 32)]
     pub base_channels: usize,
 }
 
 // --- CONV ENCODER ---
 
-/// Convolutional encoder for the VAE.
+/// The Convolutional Encoder Network.
 ///
-/// Structure:
-/// - Two conv layers downsampling 28×28 → 14×14 → 7×7
-/// - Flatten to a linear vector
-/// - Produce `mu` and `logvar` for the latent distribution
+/// Compresses input images into a low-dimensional latent space using
+/// a series of downsampling convolutional layers.
+///
+/// # Architecture
+/// 1. **Conv2d**: 28×28 → 14×14 (Stride 2)
+/// 2. **Conv2d**: 14×14 → 7×7 (Stride 2)
+/// 3. **Flatten**: 7×7×Channels → Vector
+/// 4. **Linear**: Produces $\mu$ and $\log\sigma^2$
 #[derive(Module, Debug)]
 pub struct ConvEncoder<B: Backend> {
     conv1: Conv2d<B>,
@@ -53,36 +64,38 @@ pub struct ConvEncoder<B: Backend> {
     fc_mu: Linear<B>,
     fc_logvar: Linear<B>,
     activation: Relu,
-    /// Flattened feature dimension after final conv layer.
+    /// The size of the flattened feature map after the final convolution.
+    /// Used to initialize the linear layers.
     flattened_dim: usize,
 }
 
 impl<B: Backend> ConvEncoder<B> {
-    /// Construct a new convolutional encoder.
+    /// Constructs a new `ConvEncoder`.
+    ///
+    /// Initializes weights and computes feature map dimensions.
     ///
     /// # Arguments
-    /// * `config` – VAE configuration (latent size, channels, etc.)
-    /// * `device` – Backend device where parameters are allocated
+    /// * `config` - The configuration containing channel depths and latent size.
+    /// * `device` - The backend device for tensor allocation.
     pub fn new(config: &ConvVaeConfig, device: &B::Device) -> Self {
         let c = config.base_channels;
 
-        // Layer 1:
-        // Input:  [1, 28, 28]
-        // Output: [32, 14, 14]
+        // Layer 1: Downsample 28x28 -> 14x14
+        // Input channels: 1 (Grayscale), Output: base_channels (e.g., 32)
         let conv1 = Conv2dConfig::new([1, c], [3, 3])
-            .with_stride([2, 2]) // Downsample by 2
-            .with_padding(PaddingConfig2d::Explicit(1, 1)) // Keep spatial center alignment
+            .with_stride([2, 2])
+            .with_padding(PaddingConfig2d::Explicit(1, 1)) // Keeps alignment
             .init(device);
 
-        // Layer 2:
-        // Input:  [32, 14, 14]
-        // Output: [64, 7, 7]
+        // Layer 2: Downsample 14x14 -> 7x7
+        // Input: base_channels, Output: base_channels * 2 (e.g., 64)
         let conv2 = Conv2dConfig::new([c, c * 2], [3, 3])
             .with_stride([2, 2])
             .with_padding(PaddingConfig2d::Explicit(1, 1))
             .init(device);
 
-        // After two downsampling steps: shape = (channels=64) * 7 * 7
+        // Calculate flattened dimension: (Channels * Height * Width)
+        // (c * 2) channels * 7 height * 7 width
         let flattened_dim = (c * 2) * 7 * 7;
 
         let fc_mu = LinearConfig::new(flattened_dim, config.latent_dim).init(device);
@@ -98,23 +111,24 @@ impl<B: Backend> ConvEncoder<B> {
         }
     }
 
-    /// Forward pass for the encoder.
+    /// Performs the forward pass of the encoder.
     ///
     /// # Arguments
-    /// * `x` – Input batch of shape `[Batch, 1, 28, 28]`
+    /// * `x` - Input image tensor. Shape: `(Batch, 1, 28, 28)`.
     ///
     /// # Returns
-    /// `(mu, logvar)` – tensors of shape `[Batch, latent_dim]`
+    /// A tuple `(mu, logvar)`:
+    /// * `mu`: Latent mean. Shape: `(Batch, Latent_Dim)`.
+    /// * `logvar`: Latent log-variance. Shape: `(Batch, Latent_Dim)`.
     pub fn forward(&self, x: Tensor<B, 4>) -> (Tensor<B, 2>, Tensor<B, 2>) {
-        // First convolution + activation
+        // Convolutions + ReLU
         let x = self.activation.forward(self.conv1.forward(x));
-        // Second convolution + activation
         let x = self.activation.forward(self.conv2.forward(x));
 
-        // Flatten feature maps from [B, C, 7, 7] → [B, 3136]
+        // Flatten: [Batch, Channels, Height, Width] -> [Batch, Flattened_Dim]
         let x = x.flatten(1, 3);
 
-        // Latent distribution parameters
+        // Project to latent parameters
         let mu = self.fc_mu.forward(x.clone());
         let sigma = self.fc_logvar.forward(x);
 
@@ -124,50 +138,47 @@ impl<B: Backend> ConvEncoder<B> {
 
 // --- CONV DECODER ---
 
-/// Convolutional decoder for the VAE.
+/// The Convolutional Decoder Network.
 ///
-/// Structure:
-/// - Linear layer expands latent vector into (channels×7×7)
-/// - Two transposed convolutions upsample 7×7 → 14×14 → 28×28
-/// - Final sigmoid to produce image-like output
+/// Reconstructs images from the latent vectors using Transposed Convolutions (Upsampling).
+///
+/// # Architecture
+/// 1. **Linear**: Latent Vector → Flattened Feature Map (7×7×64)
+/// 2. **Reshape**: Unflatten to 4D tensor
+/// 3. **ConvTranspose2d**: 7×7 → 14×14
+/// 4. **ConvTranspose2d**: 14×14 → 28×28
+/// 5. **Sigmoid**: Squash outputs to [0, 1]
 #[derive(Module, Debug)]
 pub struct ConvDecoder<B: Backend> {
     fc_initial: Linear<B>,
     convt1: ConvTranspose2d<B>,
     convt2: ConvTranspose2d<B>,
     activation: Relu,
-    /// Base channel depth for reconstructing shapes.
+    /// Base channel depth used to reshape the initial linear output.
     base_channels: usize,
 }
 
 impl<B: Backend> ConvDecoder<B> {
-    /// Construct a new convolutional decoder.
-    ///
-    /// # Arguments
-    /// * `config` – VAE configuration
-    /// * `device` – Backend device
+    /// Constructs a new `ConvDecoder`.
     pub fn new(config: &ConvVaeConfig, device: &B::Device) -> Self {
         let c = config.base_channels;
 
-        // Flattened feature dimension from encoder
+        // Must match encoder output dimensions: (c * 2) * 7 * 7
         let flattened_dim = (c * 2) * 7 * 7;
 
-        // Expand latent vector z → initial feature map
+        // Initial expansion from Latent Space
         let fc_initial = LinearConfig::new(config.latent_dim, flattened_dim).init(device);
 
-        // Transposed convolution 1:
-        // Input:  [64, 7, 7]
-        // Output: [32, 14, 14]
+        // Layer 1: Upsample 7x7 -> 14x14
+        // Input: 64 channels, Output: 32 channels
         let convt1 = ConvTranspose2dConfig::new([c * 2, c], [3, 3])
             .with_stride([2, 2])
-            // Note: Uses raw array (not PaddingConfig2d) for ConvTranspose
             .with_padding([1, 1])
-            .with_padding_out([1, 1])
+            .with_padding_out([1, 1]) // Crucial for correct output size
             .init(device);
 
-        // Transposed convolution 2:
-        // Input:  [32, 14, 14]
-        // Output: [1, 28, 28]
+        // Layer 2: Upsample 14x14 -> 28x28
+        // Input: 32 channels, Output: 1 channel (Grayscale)
         let convt2 = ConvTranspose2dConfig::new([c, 1], [3, 3])
             .with_stride([2, 2])
             .with_padding([1, 1])
@@ -183,45 +194,42 @@ impl<B: Backend> ConvDecoder<B> {
         }
     }
 
-    /// Forward pass for the decoder.
+    /// Performs the forward pass of the decoder.
     ///
     /// # Arguments
-    /// * `z` – Latent sample, shape `[Batch, latent_dim]`
+    /// * `z` - Latent samples. Shape: `(Batch, Latent_Dim)`.
     ///
     /// # Returns
-    /// Reconstructed images with shape `[Batch, 1, 28, 28]`
+    /// * `recon_img` - Reconstructed images. Shape: `(Batch, 1, 28, 28)`.
     pub fn forward(&self, z: Tensor<B, 2>) -> Tensor<B, 4> {
-        // Expand latent vector to flattened conv feature map
+        // Expand latent vector
         let x = self.activation.forward(self.fc_initial.forward(z));
 
-        // Unflatten to [Batch, Channels=64, 7, 7]
+        // Unflatten/Reshape to [Batch, Channels, Height, Width]
+        // Note: Reshape dimension must match the calculated flattened size.
         let x = x.reshape([0, (self.base_channels as i32 * 2), 7, 7]);
 
-        // Upsample → 14×14
+        // Upsampling layers
         let x = self.activation.forward(self.convt1.forward(x));
 
-        // Final upsample → 28×28 + sigmoid for pixel range
+        // Final layer: No ReLU here, just Sigmoid for pixel range [0, 1]
         burn::tensor::activation::sigmoid(self.convt2.forward(x))
     }
 }
 
 // --- CONV VAE MODULE ---
 
-/// Full convolutional VAE composed of:
-/// - ConvEncoder
-/// - ConvDecoder
+/// The complete Convolutional Variational Autoencoder.
 ///
-/// Includes reparameterization and end-to-end forward pass.
+/// Wraps the `ConvEncoder` and `ConvDecoder` and implements the reparameterization trick.
 #[derive(Module, Debug)]
 pub struct ConvVAE<B: Backend> {
-    /// Convolutional encoder producing latent mean and logvar.
     pub encoder: ConvEncoder<B>,
-    /// Convolutional decoder generating reconstructed images.
     pub decoder: ConvDecoder<B>,
 }
 
 impl<B: Backend> ConvVAE<B> {
-    /// Construct a convolutional VAE from configuration and device.
+    /// Constructs the full VAE model.
     pub fn new(config: &ConvVaeConfig, device: &B::Device) -> Self {
         Self {
             encoder: ConvEncoder::new(config, device),
@@ -229,31 +237,28 @@ impl<B: Backend> ConvVAE<B> {
         }
     }
 
-    /// Full VAE forward pass.
+    /// The full forward pass of the VAE.
     ///
     /// # Arguments
-    /// * `x` – Input images `[Batch, 1, 28, 28]`
+    /// * `x` - Input image batch. Shape: `(Batch, 1, 28, 28)`.
     ///
     /// # Returns
-    /// `(recon_flat, mu, logvar)`
-    ///
-    /// * `recon_flat`: Reconstructed images flattened to `[Batch, 784]`
-    /// * `mu`: Latent mean
-    /// * `logvar`: Latent log-variance
-    ///
-    /// The output is flattened because many training utilities expect
-    /// a vector input for reconstruction loss.
+    /// A tuple containing:
+    /// 1. `recon_flat`: Reconstructed images, FLATTENED to `(Batch, 784)`.
+    ///    This flattening is done for compatibility with standard MSE/BCE loss functions.
+    /// 2. `mu`: Latent mean. Shape: `(Batch, Latent_Dim)`.
+    /// 3. `logvar`: Latent log-variance. Shape: `(Batch, Latent_Dim)`.
     pub fn forward(&self, x: Tensor<B, 4>) -> (Tensor<B, 2>, Tensor<B, 2>, Tensor<B, 2>) {
-        // Encode to latent distribution parameters
+        // Encode
         let (mu, sigma) = self.encoder.forward(x);
 
-        // Reparameterization trick
+        // Reparameterize: z = mu + sigma * epsilon
         let z = reparameterize(mu.clone(), sigma.clone());
 
-        // Decode latent vector → image
+        // Decode
         let recon_img = self.decoder.forward(z);
 
-        // Flatten output back to vector shape: [Batch, 1, 28, 28] → [Batch, 784]
+        // Flatten output for loss calculation: [Batch, 1, 28, 28] -> [Batch, 784]
         let recon_flat = recon_img.flatten(1, 3);
 
         (recon_flat, mu, sigma)
