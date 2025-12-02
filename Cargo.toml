@@ -30,6 +30,10 @@ path = "src/morph_dyn.rs"
 name = "morph_static"
 path = "src/morph_static.rs"
 
+[[bin]] # Bin to view the first n testimages
+name = "view"
+path = "src/view_mnists.rs"
+
 [features]
 # The 'dense' feature enables the dense model implementation
 dense = []
@@ -37,4 +41,4 @@ dense = []
 # The 'conv' feature enables the convolutional model implementation
 conv = []
 
-default = ["conv"]
+default = ["dense"]
