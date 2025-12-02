@@ -159,7 +159,7 @@ fn main() {
     let title = format!("VAE Grid (z[2]={})", args.z2);
     let leaked_title: &'static str = Box::leak(title.into_boxed_str());
 
-    let m_chart = MultiChart::new(items);
+    let m_chart = MultiChart::new(items).with_x_space(4).with_y_space(4);
 
     println!("Opening Window...");
     let _ = tiny_plot_lib::run_static(leaked_title, m_chart);

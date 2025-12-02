@@ -92,7 +92,7 @@ fn main() -> iced::Result {
     let app = VaeApp {
         model,
         device,
-        multi_chart: MultiChart::new(items),
+        multi_chart: MultiChart::new(items).with_x_space(4).with_y_space(4),
         start_time: Instant::now(),
         latent_dim: config.latent_dim,
         current_z2: 0.0,

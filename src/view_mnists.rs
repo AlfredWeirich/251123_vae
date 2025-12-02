@@ -54,7 +54,7 @@ fn view_first_mnists<B: Backend>(_device: &B::Device) {
         items.push(tiny_plot_lib::GridItem::Image(img));
     }
 
-    let chart = tiny_plot_lib::MultiChart::new(items);
+    let chart = tiny_plot_lib::MultiChart::new(items).with_x_space(4).with_y_space(4);
 
     // Run the UI
     let _ = tiny_plot_lib::run_static("Test MNIST Images (Colored by Label)", chart);
