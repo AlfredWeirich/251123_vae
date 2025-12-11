@@ -24,13 +24,12 @@ pub struct DenseVaeConfig {
     /// Example: `vec![512, 256]` results in:
     /// *   **Encoder:** Input -> 512 -> 256 -> Latent
     /// *   **Decoder:** Latent -> 256 -> 512 -> Input
-    #[config(default = "vec![512, 256, 64]")]
+    #[config(default = "vec![32,12]")]
     pub hidden_dims: Vec<usize>,
 
-    /// The dimension of the latent space ($z$).
+    /// The dimension of the latent space (z).
     #[config(default = 20)]
     pub latent_dim: usize,
-
     /// Learning rate for the optimizer.
     #[config(default = 1e-3)]
     pub learning_rate: f64,

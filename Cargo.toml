@@ -34,6 +34,10 @@ path = "src/morph_static.rs"
 name = "view"
 path = "src/view_mnists.rs"
 
+[[bin]] # Bin to view the latent space
+name = "latent"
+path = "src/view_latent.rs"
+
 [features]
 # The 'dense' feature enables the dense model implementation
 dense = []

@@ -41,7 +41,7 @@ pub struct ConvVaeConfig {
 
     /// The number of channels in the first convolutional layer.
     /// Subsequent layers typically double this depth (e.g., 32 -> 64).
-    #[config(default = 32)]
+    #[config(default = 128)]
     pub base_channels: usize,
 }
 

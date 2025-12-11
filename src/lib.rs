@@ -28,15 +28,6 @@ pub const MNIST_DIM_X: u32 = 28;
 /// Height of MNIST images in pixels.
 pub const MNIST_DIM_Y: u32 = 28;
 
-/// Dimensionality of the VAE latent space (z).
-///
-/// This defines the size of the information bottleneck.
-/// * A smaller dimension forces higher compression/abstraction.
-/// * A larger dimension allows for better reconstruction but may lead to overfitting.
-///
-/// This constant is used globally for model configuration and CLI arguments.
-pub const LATENT_DIM: usize = 4;
-
 // --- LOSS FUNCTION ---
 
 /// Computes the VAE Loss Function (Negative Evidence Lower Bound).
@@ -67,7 +58,8 @@ pub fn loss_function<B: Backend>(
     recon_x: Tensor<B, 2>,
     x: Tensor<B, 2>,
     mu: Tensor<B, 2>,
-    sigma: Tensor<B, 2>,
+    logvar: Tensor<B, 2>,
+    beta: f32,
 ) -> Tensor<B, 1> {
     // Epsilon for numerical stability to prevent log(0) resulting in NaN/Inf.
     let eps = 1e-8;
@@ -83,17 +75,22 @@ pub fn loss_function<B: Backend>(
 
     // Reconstruction Loss: Sum over features, Mean over batch.
     let recon_loss = bce.sum_dim(1).mean();
+    // println!(
+    //     "Reconstruction Loss: {:?}",
+    //     recon_loss.to_data().to_vec::<f32>()
+    // );
 
     // Compute Kullback-Leibler (KL) Divergence analytically.
     // Measures the difference between the learned distribution and N(0, 1).
     // Formula: 0.5 * sum( exp(logvar) + mu^2 - logvar - 1 )
-    let kld = (sigma.clone().exp() + mu.powf_scalar(2.0) - sigma - 1.0)
+    let kld = (logvar.clone().exp() + mu.powf_scalar(2.0) - logvar - 1.0)
         .sum_dim(1)
         .mean() // Mean over batch
         .mul_scalar(0.5);
+    // println!("KL Divergence: {:?}", kld.to_data().to_vec::<f32>());
 
-    // Total Loss = Reconstruction + Regularization
-    recon_loss + kld
+    // Total Loss = Reconstruction + Regularization * beta
+    recon_loss + kld.mul_scalar(beta)
 }
 
 /// Converts normalized floating-point pixel data into raw RGB bytes.
@@ -166,6 +163,11 @@ impl ModelTreePrinter {
         print!("{}", "  ".repeat(self.indent));
     }
 }
+impl Default for ModelTreePrinter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<B: Backend> ModuleVisitor<B> for ModelTreePrinter {
     /// Called when the visitor enters a child module.
@@ -197,5 +199,103 @@ impl<B: Backend> ModuleVisitor<B> for ModelTreePrinter {
     fn visit_bool<const D: usize>(&mut self, param: &Param<Tensor<B, D, burn::tensor::Bool>>) {
         self.print_indent();
         println!("Param (Bool): {:?}", param.shape());
+    }
+}
+
+/// Computes the dynamic KL Divergence weight ($\beta$) using a Cyclic/Linear Annealing schedule.
+///
+/// This technique helps prevent "Posterior Collapse" (where the decoder ignores the latent space)
+/// by letting the model learn to reconstruct images as a pure Autoencoder first, before
+/// slowly introducing the Gaussian regularization constraint.
+///
+/// # Schedule Strategy
+/// The training is divided into three distinct phases based on the `progress` ($t$):
+///
+/// 1. **Warmup Phase (0% - 20%)**: $\beta = 0.0$.
+///    The model trains purely on reconstruction loss. The latent space organizes itself freely
+///    without being forced into a Gaussian shape.
+///
+/// 2. **Annealing Phase (20% - 70%)**: $\beta \to 0.0 \dots 1.0$.
+///    The regularization weight increases linearly. The clusters formed in Phase 1 are
+///    gently pulled towards the center to approximate $N(0,1)$.
+///
+/// 3. **Standard Phase (70% - 100%)**: $\beta = 1.0$.
+///    Standard VAE training. The latent space is fully regularized to ensure continuity
+///    for sampling.
+///
+/// # Arguments
+///
+/// * `current_epoch` - The current training epoch (0-indexed).
+/// * `max_epochs` - The total number of epochs defined for training.
+///
+/// # Returns
+///
+/// A `f32` value between `0.0` and `1.0`.
+pub fn calculate_kl_beta_ramp(current_epoch: usize, max_epochs: usize, max_beta: f32) -> f32 {
+    // Edge case: Prevent division by zero if training configuration is invalid.
+    if max_epochs == 0 {
+        return 1.0;
+    }
+
+    // Normalized progress ratio [0.0, 1.0] (or > 1.0 if over-training).
+    let progress = current_epoch as f32 / max_epochs as f32;
+
+    if progress < 0.2 {
+        // --- PHASE 1: Deterministic Warmup ---
+        // Disable KL loss completely.
+        // Goal: Minimize Reconstruction Error (MSE/BCE) only.
+        0.0
+    } else if progress < 0.7 {
+        // --- PHASE 2: Linear Annealing ---
+        // Linearly interpolate Beta from 0.0 to 1.0 over 50% of the training duration.
+        // Formula: (Current_Progress - Phase_Start) / Phase_Duration
+        // Range: (0.2 -> 0.7) maps to (0.0 -> 1.0)
+        (progress - 0.2) / 0.5 * max_beta
+    } else {
+        // --- PHASE 3: Standard VAE ---
+        // Full regularization enabled.
+        // Goal: Ensure latent space is valid for generation (Standard Normal Distribution).
+        max_beta
+    }
+}
+
+/// cyclic variable beta generator for traing VAE
+pub struct BetaCyclic {
+    num_zeros: usize, // num epochs with beta=0
+    speed: f32,       // speed of sin cycle
+    beta_max: f32,    // maximum beta value
+    step: usize,
+}
+
+impl BetaCyclic {
+    pub fn new(num_zeros: usize, speed: f32, beta_max: f32) -> Self {
+        Self {
+            num_zeros,
+            speed,
+            beta_max,
+            step: 0,
+        }
+    }
+}
+
+impl Iterator for BetaCyclic {
+    type Item = f32;
+
+    fn next(&mut self) -> std::option::Option<f32> {
+        let value = if self.step < self.num_zeros {
+            0.0
+        } else {
+            let t = (self.step - self.num_zeros) as f32;
+            (t * self.speed).sin() * self.beta_max
+        };
+
+        self.step += 1;
+
+        // restart when sin reaches full π/2 cycle
+        let cycle_len = self.num_zeros + ((core::f32::consts::PI) / self.speed / 2.0) as usize;
+        if self.step >= cycle_len {
+            self.step = 0; // repeat cycle
+        }
+        Some(value)
     }
 }

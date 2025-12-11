@@ -5,7 +5,11 @@
 use vae::conv_model::{ConvVAE, ConvVaeConfig};
 #[cfg(feature = "dense")]
 use vae::dense_model::{DenseVAE, DenseVaeConfig};
-use vae::{LATENT_DIM, MNIST_DIM_X, MNIST_DIM_Y};
+use vae::{
+    //LATENT_DIM,
+    MNIST_DIM_X,
+    MNIST_DIM_Y,
+};
 
 use burn::{
     config::Config,
@@ -39,7 +43,7 @@ struct Args {
     /// `--mu 0.5 -1.2 0.3 ...`
     ///
     /// Must contain exactly `LATENT_DIM` values.
-    #[arg(long, value_delimiter = ' ', num_args = LATENT_DIM, allow_hyphen_values = true)]
+    #[arg(long, value_delimiter = ' ', num_args = 1 .., allow_hyphen_values = true)]
     mu: Option<Vec<f32>>,
 
     /// List of floats representing log-variance entries.

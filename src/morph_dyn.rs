@@ -20,24 +20,41 @@ use burn::{
 use burn_wgpu::{Wgpu, WgpuDevice};
 
 // Plot Lib Imports (Your local lib)
+use clap::Parser;
 use tiny_plot_lib::{GridItem, MultiChart, RawImage};
 
 // --- CONSTANTS ---
 
-/// Number of rows in the visualization grid.
-/// Number of columns in the visualization grid.
-const GRID_COLS: usize = 15;
-const GRID_ROWS: usize = 15;
-/// Total number of images displayed per frame (rows × cols).
-const GRID_SIZE: usize = GRID_ROWS * GRID_COLS;
-
-/// Latent range span for grid axes (each dimension varies in [-LATENT_RANGE, LATENT_RANGE]).
-const LATENT_RANGE: f32 = 3.0;
-
-/// resize images build from latent space to make them better visible
-const RESIZE_FACTOR: u32 = 3;
 const IMAGE_WIDTH: u32 = 28;
 const IMAGE_HEIGHT: u32 = 28;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Latent range span for grid axes (each dimension varies in [-LATENT_RANGE, LATENT_RANGE])
+    #[arg(long, default_value_t = 3.0)]
+    latent_range: f32,
+
+    /// resize images build from latent space to make them better visible
+    #[arg(long, default_value_t = 3)]
+    resize: u32,
+
+    /// Number of rows in the grid
+    #[arg(long, default_value_t = 15)]
+    grid_rows: u32,
+
+    /// Number of cols in the grid
+    #[arg(long, default_value_t = 15)]
+    grid_cols: u32,
+
+    /// Dyn Speed
+    #[arg(long, default_value_t = 0.5)]
+    speed: f32,
+
+    /// title of plot
+    #[arg(long, default_value_t = String::from("Dynamic VAE Latent Space"))]
+    plot_title: String,
+}
 
 // --- MAIN ---
 
@@ -52,6 +69,9 @@ const IMAGE_HEIGHT: u32 = 28;
 ///
 /// Feature flags determine which model type is compiled (`dense` or `conv`).
 fn main() -> iced::Result {
+    // 1. Parse CLI Arguments
+    let args = Args::parse();
+
     // 1. Setup Backend (WGPU for hardware acceleration)
     type InferenceBackend = Wgpu;
     let device = WgpuDevice::DefaultDevice;
@@ -75,16 +95,13 @@ fn main() -> iced::Result {
     let model = ConvVAE::<InferenceBackend>::new(&config, &device).load_record(record);
 
     // 3. Initialize the grid UI with placeholder black images
-    let mut items = Vec::with_capacity(GRID_SIZE);
-    for _ in 0..GRID_SIZE {
+    let mut items = Vec::with_capacity((args.grid_rows * args.grid_cols) as usize);
+    for _ in 0..args.grid_rows * args.grid_cols {
         items.push(GridItem::Image(RawImage {
             title: "".into(),
-            width: MNIST_DIM_X * RESIZE_FACTOR,
-            height: MNIST_DIM_Y * RESIZE_FACTOR,
-            pixels: vec![
-                0;
-                (MNIST_DIM_X * MNIST_DIM_Y * 3 * RESIZE_FACTOR * RESIZE_FACTOR) as usize
-            ], // RGB: black
+            width: MNIST_DIM_X * args.resize,
+            height: MNIST_DIM_Y * args.resize,
+            pixels: vec![0; (MNIST_DIM_X * MNIST_DIM_Y * 3 * args.resize * args.resize) as usize], // RGB: black
         }));
     }
 
@@ -96,6 +113,10 @@ fn main() -> iced::Result {
         start_time: Instant::now(),
         latent_dim: config.latent_dim,
         current_z2: 0.0,
+        latent_range: args.latent_range,
+        resize_factor: args.resize,
+        morph_speed: args.speed,
+        args,
     };
 
     println!("Starting UI...");
@@ -130,6 +151,10 @@ struct VaeApp {
     start_time: Instant,
     latent_dim: usize,
     current_z2: f32,
+    latent_range: f32,
+    resize_factor: u32,
+    morph_speed: f32,
+    args: Args,
 }
 
 /// UI message type used for timer ticks.
@@ -152,10 +177,11 @@ impl VaeApp {
             Message::Tick(now) => {
                 // 1. Compute dynamic oscillating Z₂ via a sine curve
                 let elapsed = (now - self.start_time).as_secs_f32();
-                let speed = 0.05;
+                let speed = self.morph_speed;
+
                 let triangle = ((elapsed * speed) % 2.0 - 1.0).abs() * 2.0 - 1.0;
 
-                self.current_z2 = triangle * LATENT_RANGE;
+                self.current_z2 = triangle * self.latent_range;
 
                 // 2. Build the latent batch
                 //
@@ -165,15 +191,16 @@ impl VaeApp {
                 //    Dimensions 0 and 1 come from grid coordinates,
                 //    Dimension 2 oscillates over time,
                 //    Remaining dimensions = 0.
-                let mut batch_vec = Vec::with_capacity(GRID_SIZE * self.latent_dim);
+                let size = self.args.grid_rows * self.args.grid_cols;
+                let mut batch_vec = Vec::with_capacity(size as usize * self.latent_dim);
 
-                for y in 0..GRID_ROWS {
-                    for x in 0..GRID_COLS {
-                        let fx = x as f32 / (GRID_COLS - 1) as f32;
-                        let fy = y as f32 / (GRID_ROWS - 1) as f32;
+                for y in 0..self.args.grid_rows {
+                    for x in 0..self.args.grid_cols {
+                        let fx = x as f32 / (self.args.grid_cols - 1) as f32;
+                        let fy = y as f32 / (self.args.grid_rows - 1) as f32;
 
-                        let z_x = -LATENT_RANGE + fx * (LATENT_RANGE * 2.0);
-                        let z_y = -LATENT_RANGE + fy * (LATENT_RANGE * 2.0);
+                        let z_x = -self.latent_range + fx * (self.latent_range * 2.0);
+                        let z_y = -self.latent_range + fy * (self.latent_range * 2.0);
 
                         // Fill dimensions carefully up to latent_dim
                         batch_vec.push(z_x); // dim 0
@@ -194,7 +221,13 @@ impl VaeApp {
 
                 // 3. Convert latent batch → a single tensor
                 let z_tensor = Tensor::<Wgpu, 2>::from_floats(
-                    TensorData::new(batch_vec, vec![GRID_SIZE, self.latent_dim]),
+                    TensorData::new(
+                        batch_vec,
+                        vec![
+                            (self.args.grid_rows * self.args.grid_cols) as usize,
+                            self.latent_dim,
+                        ],
+                    ),
                     &self.device,
                 );
 
@@ -210,7 +243,7 @@ impl VaeApp {
                 // 5. Update individual grid images
                 let img_size = (MNIST_DIM_X * MNIST_DIM_Y) as usize;
 
-                for i in 0..GRID_SIZE {
+                for i in 0..(self.args.grid_rows * self.args.grid_cols) as usize {
                     let start = i * img_size;
                     let end = start + img_size;
                     if end <= flat_pixels.len() {
@@ -223,8 +256,8 @@ impl VaeApp {
                             .unwrap();
                         let resized = image::imageops::resize(
                             &img,
-                            IMAGE_WIDTH * RESIZE_FACTOR,
-                            IMAGE_HEIGHT * RESIZE_FACTOR,
+                            IMAGE_WIDTH * self.resize_factor,
+                            IMAGE_HEIGHT * self.resize_factor,
                             image::imageops::FilterType::Triangle,
                         );
                         let resized_buffer = resized.to_vec();
