@@ -95,8 +95,15 @@ fn save_image_as_png(pixels: Vec<f32>, filename: &str) {
             img.put_pixel(x, y, Luma([pixel_u8]));
         }
     }
-
-    img.save(Path::new(filename)).expect("Failed to save image");
+    let resized = image::imageops::resize(
+        &img,
+        MNIST_DIM_X * 4,
+        MNIST_DIM_Y * 4,
+        image::imageops::FilterType::Triangle,
+    );
+    resized
+        .save(Path::new(filename))
+        .expect("Failed to save image");
     println!("Saved image to {}", filename);
 }
 
@@ -189,12 +196,17 @@ fn main() {
         }
     } else {
         // --- RANDOM MODE ---
-        println!("No inputs provided. Generating random sample from Standard Normal.");
-        Tensor::<InferenceBackend, 2>::random(
+
+        let z = Tensor::<InferenceBackend, 2>::random(
             [1, config.latent_dim],
             Distribution::Normal(0.0, 1.0),
             &device,
-        )
+        );
+        println!(
+            "No inputs provided. Generating random sample from Standard Normal: {}",
+            z.to_data()
+        );
+        z
     };
 
     // 4. Decode Latent Vector
