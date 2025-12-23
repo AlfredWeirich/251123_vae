@@ -38,6 +38,16 @@ use burn_wgpu::{Wgpu, WgpuDevice};
 use clap::{Parser, ValueEnum};
 use std::sync::Arc;
 
+type TestDl<B> = dyn DataLoader<
+        <B as AutodiffBackend>::InnerBackend,
+        (
+            Tensor<<B as AutodiffBackend>::InnerBackend, 2>,
+            Tensor<<B as AutodiffBackend>::InnerBackend, 1, Int>,
+        ),
+    >;
+
+type TrainDl<B>=    dyn DataLoader<B, (Tensor<B, 2>, Tensor<B, 1, Int>)>;
+
 // -------------------------------------------------------------------------------------------------
 // CLI Arguments & Configuration
 // -------------------------------------------------------------------------------------------------
@@ -173,7 +183,8 @@ impl BetaScheduler {
 /// # Generics
 /// * `B`: The `AutodiffBackend` (e.g., WGPU, Torch). It must support automatic differentiation.
 fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
-    // 1. Configuration
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 1
+    // Configuration
     let config = VaeConfig::new()
         .with_latent_dim(args.latent_dim)
         .with_num_epochs(args.num_epochs);
@@ -181,7 +192,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
     println!("Configuration: {:?}", config);
     println!("Using Device: {:?}", device);
 
-    // 2. Model Initialization
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 2
+    // Model Initialization
     let mut model = VaeModel::<B>::new(&config, &device);
 
     // Print Model Architecture
@@ -189,10 +201,12 @@ fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
     model.visit(&mut visitor);
     println!("Model Params: {}", model.num_params());
 
-    // 3. Data Loading
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 3
+    // Data Loading
     let (train_loader, test_loader) = get_dataloader::<B>(config.clone());
 
-    // 4. Optimizer Setup
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 4
+    // Optimizer Setup
     // We use L2 Regularization (Weight Decay) to prevent overfitting.
     let optim_config =
         AdamConfig::new().with_weight_decay(Some(burn::optim::decay::WeightDecayConfig {
@@ -200,7 +214,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
         }));
     let mut optimizer = optim_config.init();
 
-    // 5. Beta scheduler Setup
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 5
+    // Beta scheduler Setup
     let beta_scheduler = BetaScheduler::from_args(&args);
 
     println!("Starting training...");
@@ -209,7 +224,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
     let val_loss = validate(&model, test_loader.clone());
     println!("Pre-Train Validation Loss: {:.4}", val_loss);
 
-    // 6. Epoch Loop
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 6
+    // Epoch Loop
     for epoch in 1..=config.num_epochs {
         let mut total_loss = 0.0;
         let mut batch_count = 0;
@@ -248,7 +264,8 @@ fn training_loop<B: AutodiffBackend>(device: B::Device, args: Args) {
         println!("Epoch {} | Validation Loss: {:.4}", epoch, val_loss);
     }
 
-    // 7. Save Model
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 7
+    // Save Model
     save_vae_model(model, config);
 }
 
@@ -285,15 +302,7 @@ fn save_vae_model<B: Backend>(model: VaeModel<B>, config: VaeConfig) {
 ///
 /// # Arguments
 /// * `dataloader`: Uses `InnerBackend` to avoid Autodiff overhead during validation.
-fn validate<B: Backend + AutodiffBackend>(
-    model: &VaeModel<B>,
-    dataloader: Arc<
-        dyn DataLoader<
-                B::InnerBackend,
-                (Tensor<B::InnerBackend, 2>, Tensor<B::InnerBackend, 1, Int>),
-            >,
-    >,
-) -> f64 {
+fn validate<B: Backend + AutodiffBackend>(model: &VaeModel<B>, dataloader: Arc<TestDl<B>>) -> f64 {
     let mut total_loss = 0.0;
     let mut num_batches = 0;
 
@@ -344,13 +353,8 @@ fn forward_pass<B: Backend>(
 fn get_dataloader<B: Backend + AutodiffBackend>(
     config: VaeConfig,
 ) -> (
-    Arc<dyn DataLoader<B, (Tensor<B, 2>, Tensor<B, 1, Int>)>>,
-    Arc<
-        dyn DataLoader<
-                B::InnerBackend,
-                (Tensor<B::InnerBackend, 2>, Tensor<B::InnerBackend, 1, Int>),
-            >,
-    >,
+    Arc<TrainDl<B>>,
+    Arc<TestDl<B>>,
 ) {
     let train_batcher = MnistBatcher::<B>::new();
     let train_loader = DataLoaderBuilder::new(train_batcher)
@@ -368,13 +372,16 @@ fn get_dataloader<B: Backend + AutodiffBackend>(
 }
 
 fn main() {
-    // 1. Parse Arguments
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 1
+    // Parse Arguments
     let args = Args::parse();
 
-    // 2. Select Backend (WGPU with Autodiff wrapper)
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 2
+    // Select Backend (WGPU with Autodiff wrapper)
     type TrainBackend = burn::backend::Autodiff<Wgpu>;
     let device = WgpuDevice::DefaultDevice;
 
-    // 3. Launch
+    // 🦀 🔻🔻🔻🔻🔻🔻 Note 3
+    // Launch training loop
     training_loop::<TrainBackend>(device, args);
 }
