@@ -23,11 +23,6 @@ use burn_wgpu::{Wgpu, WgpuDevice};
 use clap::Parser;
 use tiny_plot_lib::{GridItem, MultiChart, RawImage};
 
-// --- CONSTANTS ---
-
-const IMAGE_WIDTH: u32 = 28;
-const IMAGE_HEIGHT: u32 = 28;
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -252,12 +247,12 @@ impl VaeApp {
                         // Convert grayscale float → RGB byte triplets
                         let rgb_bytes = build_rgb_bytes(img_slice);
 
-                        let img = image::RgbImage::from_raw(IMAGE_WIDTH, IMAGE_HEIGHT, rgb_bytes)
-                            .unwrap();
+                        let img =
+                            image::RgbImage::from_raw(MNIST_DIM_X, MNIST_DIM_Y, rgb_bytes).unwrap();
                         let resized = image::imageops::resize(
                             &img,
-                            IMAGE_WIDTH * self.resize_factor,
-                            IMAGE_HEIGHT * self.resize_factor,
+                            MNIST_DIM_X * self.resize_factor,
+                            MNIST_DIM_Y * self.resize_factor,
                             image::imageops::FilterType::Triangle,
                         );
                         let resized_buffer = resized.to_vec();
