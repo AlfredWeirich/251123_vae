@@ -13,23 +13,16 @@
 use burn::data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset};
 use burn::tensor::backend::Backend;
 use vae::mnist_data::MnistBatcher;
+use vae::{MNIST_DIM_X, MNIST_DIM_Y};
+/// Total number of pixels per image (28 * 28 = 784).
+const IMAGE_SIZE: usize = (MNIST_DIM_X * MNIST_DIM_Y) as usize;
 
 // --- CONSTANTS ---
 
 /// Number of rows in the visualization grid.
-const GRID_ROWS: usize = 10;
-
 /// Number of columns in the visualization grid.
+const GRID_ROWS: usize = 10;
 const GRID_COLS: usize = 10;
-
-/// Native width of MNIST images in pixels (28).
-const IMAGE_WIDTH: u32 = 28;
-
-/// Native height of MNIST images in pixels (28).
-const IMAGE_HEIGHT: u32 = 28;
-
-/// Total number of pixels per image (28 * 28 = 784).
-const IMAGE_SIZE: usize = (IMAGE_WIDTH * IMAGE_HEIGHT) as usize;
 
 /// Upscaling factor for visualization.
 ///
@@ -91,28 +84,28 @@ pub fn view_first_mnists<B: Backend>(_device: &B::Device) {
     let images: Vec<f32> = train_images
         .to_data()
         .to_vec()
-        .expect("Failed to get image data");
+        .expect("Get train image data");
     let labels: Vec<i32> = train_labels
         .to_data()
         .to_vec()
-        .expect("Failed to get label data");
+        .expect("Get train label data");
 
-    let mut items: Vec<tiny_plot_lib::GridItem> = Vec::with_capacity(GRID_COLS * GRID_ROWS);
+    let mut mnist_digits: Vec<tiny_plot_lib::GridItem> = Vec::with_capacity(GRID_COLS * GRID_ROWS);
 
     // Process images and labels in parallel
     // We slice the flat `images` vector into chunks of 784 pixels.
-    for (image_chunk, &label) in images.chunks(IMAGE_SIZE).zip(labels.iter()) {
-        let img = create_colored_image(image_chunk, label);
-        items.push(tiny_plot_lib::GridItem::Image(img));
+    for (mnist_image, &mnist_label) in images.chunks(IMAGE_SIZE).zip(labels.iter()) {
+        let img = create_colored_image(mnist_image, mnist_label);
+        mnist_digits.push(tiny_plot_lib::GridItem::Image(img));
     }
 
     // Configure the MultiChart grid
-    let chart = tiny_plot_lib::MultiChart::new(items)
+    let digits_matrix = tiny_plot_lib::MultiChart::new(mnist_digits)
         .with_x_space(4) // Add padding between grid cells
         .with_y_space(4);
 
     // Launch the Iced Application (Blocks until window closes)
-    let _ = tiny_plot_lib::run_static("Test MNIST Images (Colored by Label)", chart);
+    let _ = tiny_plot_lib::run_static("Test MNIST Images (Colored by Label)", digits_matrix);
 }
 
 /// Transforms raw grayscale pixel data into a colorized, resized image struct.
@@ -129,8 +122,8 @@ pub fn view_first_mnists<B: Backend>(_device: &B::Device) {
 /// # Returns
 /// A `RawImage` struct compatible with `tiny_plot_lib`.
 fn create_colored_image(image_data: &[f32], label: i32) -> tiny_plot_lib::RawImage {
-    let width = IMAGE_WIDTH;
-    let height = IMAGE_HEIGHT;
+    let width = MNIST_DIM_X;
+    let height = MNIST_DIM_Y;
     let mut pixels = Vec::with_capacity((width * height * 3) as usize);
 
     // 1. Retrieve color factors for the specific digit
@@ -156,8 +149,8 @@ fn create_colored_image(image_data: &[f32], label: i32) -> tiny_plot_lib::RawIma
     // Triangle filtering provides a good balance between speed and smoothness for upscaling.
     let resized = image::imageops::resize(
         &img,
-        IMAGE_WIDTH * RESIZE_FACTOR,
-        IMAGE_HEIGHT * RESIZE_FACTOR,
+        MNIST_DIM_X * RESIZE_FACTOR,
+        MNIST_DIM_Y * RESIZE_FACTOR,
         image::imageops::FilterType::Triangle,
     );
 
